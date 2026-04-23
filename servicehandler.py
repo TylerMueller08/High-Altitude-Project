@@ -18,6 +18,3 @@ class ServiceHandler:
             self.worker.stop()
             self.worker.wait()
         print("Stopped BioAltitude Services.")
-        
-
-    
