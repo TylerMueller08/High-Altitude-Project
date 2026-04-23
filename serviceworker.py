@@ -5,6 +5,7 @@ class ServiceWorker(threading.Thread):
         super().__init__()
         self.bme280 = bme280
         self.running = False
+        self.daemon = True
 
     def start(self):
         self.running = True
@@ -17,10 +18,6 @@ class ServiceWorker(threading.Thread):
         video_file = f"{folder}/video.mp4"
         csv_file = f"{folder}/data.csv"
 
-        csvf = open(csv_file, "w", newline="")
-        writer = csv.writer(csvf)
-        writer.writerow(["Timestamp [MST]", "Altitude [m]", "Temperature[°C]", "Humidity [%]", "Pressure [hPa]"])
-
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
             utils.log("Service Worker", "Could not open video stream.")
@@ -28,44 +25,58 @@ class ServiceWorker(threading.Thread):
         
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
+        
         out = cv2.VideoWriter(
             video_file,
             cv2.VideoWriter_fourcc(*'mp4v'),
             1.0,
             (width, height))
 
-        utils.log("Service Worker", f"Video Recording Started at {video_file}")
-        utils.log("Service Worker", f"CSV Recording Started at {csv_file}")
+        utils.log("Service Worker", f"Recording Started: {folder}")
 
-        while self.running:
-            ret, frame = cap.read()
-            if not ret:
-                utils.log("Service Worker", "Failed to capture video frame.")
-                break
+        with open(csv_file, "w", newline="") as csvf:
+            writer = csv.writer(csvf)
+            writer.writerow(["Timestamp [MST]", "Altitude [m]", "Temperature[C]", "Humidity [%]", "Pressure [hPa]"])
 
-            timestamp = utils.timestamp("%H:%M:%S")
-            altitude = round(self.bme280.altitude, 2)
-            temperature = round(self.bme280.temperature, 2)
-            humidity = round(self.bme280.relative_humidity, 2)
-            pressure = round(self.bme280.pressure, 2)
+            while self.running:
+                start_loop = time.time()
+                
+                ret, frame = cap.read()
+                if not ret:
+                    utils.log("Service Worker", "Failed to capture video frame.")
+                    break
 
-            cv2.putText(frame, timestamp, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, f"Altitude: {altitude} m", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, f"Temperature: {temperature} °C", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, f"Humidity: {humidity} %", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, f"Pressure: {pressure} hPa", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                try:
+                    timestamp = utils.timestamp("%H:%M:%S")
+                    alt = round(self.bme280.altitude, 2)
+                    temp = round(self.bme280.temperature, 2)
+                    hum = round(self.bme280.relative_humidity, 2)
+                    pres = round(self.bme280.pressure, 2)
+                except Exception as e:
+                    utils.log("Service Worker", f"Sensor read error: {e}")
+                    continue
 
-            out.write(frame)
-            writer.writerow([timestamp, altitude, temperature, humidity, pressure])
-            
-            time.sleep(1)
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                color = (255, 255, 255)
+                thickness = 2
+                scale = 0.7
+
+                cv2.putText(frame, f"Time: {timestamp}", (10, 30), font, scale, color, thickness)
+                cv2.putText(frame, f"Alt:  {alt} m",     (10, 60), font, scale, color, thickness)
+                cv2.putText(frame, f"Temp: {temp} C",     (10, 90), font, scale, color, thickness)
+                cv2.putText(frame, f"Hum:  {hum} %",     (10, 120), font, scale, color, thickness)
+                cv2.putText(frame, f"Pres: {pres} hPa",   (10, 150), font, scale, color, thickness)
+
+                out.write(frame)
+                writer.writerow([timestamp, alt, temp, hum, pres])
+                csvf.flush()
+
+                elapsed = time.time() - start_loop
+                time.sleep(max(0, 1.0 - elapsed))
 
         cap.release()
         out.release()
-        csvf.close()
-
-        utils.log("Service Worker", "Recording Stopped.")
+        utils.log("Service Worker", "Recording Stopped and Files Saved.")
 
     def stop(self):
         self.running = False
