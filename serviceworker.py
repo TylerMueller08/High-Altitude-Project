@@ -12,6 +12,10 @@ class ServiceWorker(threading.Thread):
         super().start()
 
     def run(self):
+        video_enabled = False
+        cap = None
+        out = None
+
         folder = f"data/{utils.timestamp()}"
         os.makedirs(folder, exist_ok=True)
 
