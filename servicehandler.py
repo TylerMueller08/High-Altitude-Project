@@ -16,5 +16,4 @@ class ServiceHandler:
     def stop(self):
         if hasattr(self, "worker"):
             self.worker.stop()
-            self.worker.wait()
         print("Stopped BioAltitude Services.")
