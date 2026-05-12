@@ -18,53 +18,53 @@ class ServiceWorker(threading.Thread):
         video_file = f"{folder}/video.avi"
         csv_file = f"{folder}/data.csv"
 
+        target_fps = 10.0
+        frame_duration = 1.0 / target_fps
+
         cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
         utils.log("Service Worker", "Attempting to access camera stream.")
+
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 10)
+
         time.sleep(2.5)
 
         video_enabled = cap.isOpened()
         out = None
-        frame_duration = 0
 
         if not video_enabled:
             utils.log("Service Worker", "Camera stream not found. Proceeding with sensor logging.")
         else:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-            if fps <= 0:
-                fps = 30.0
-
-            frame_duration = 1.0 / fps
 
             if width > 0 and height > 0:
-                fourcc = cv2.VideoWriter_fourcc(*'XVID')
-                out = cv2.VideoWriter(video_file, fourcc, fps, (width, height))
-                utils.log("Service Worker", f"Video Recording Initialized with {width}x{height} at {fps} FPS.")
+                fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+                out = cv2.VideoWriter(video_file, fourcc, target_fps, (width, height))
+                utils.log("Service Worker", f"Video Recording Initialized with {width}x{height} at {target_fps} FPS.")
             else:
                 utils.log("Service Worker", "Camera Reported Invalid Resolution. Video Recording Disabled.")
                 video_enabled = False
 
         with open(csv_file, "w", newline="") as csvf:
             writer = csv.writer(csvf)
-            writer.writerow(["Timestamp [MST]", "Altitude [m]", "Temperature[C]", "Humidity [%]", "Pressure [hPa]"])
+            writer.writerow(["Timestamp [MST]", "Altitude [m]", "Temperature [C]", "Humidity [%]", "Pressure [hPa]"])
             
             alt, temp, hum, pres = (0, 0, 0, 0)
             last_sensor_update = 0
             timestamp = utils.timestamp("%H:%M:%S")
 
             utils.log("Service Worker", f"CSV Logging Started at {csv_file}")
+            next_frame_time = time.monotonic()
 
             while self.running:
-                loop_start = time.time()
+                loop_start = time.monotonic()
 
                 if video_enabled:
                     ret, frame = cap.read()
                     if not ret:
+                        utils.log("Service Worker", "Failed to read frame from camera. Stopping video recording.")
                         break
 
                 try:
@@ -78,17 +78,17 @@ class ServiceWorker(threading.Thread):
                         writer.writerow([timestamp, alt, temp, hum, pres])
                         csvf.flush()
                         last_sensor_update = loop_start
-                except:
-                    pass
-                
+                except Exception as e:
+                    utils.log("Service Worker", f"Error occurred while updating sensor data: {e}")
+
                 if video_enabled:
                     txt = f"{timestamp} | {alt}m | {temp}C | {hum}% | {pres}hPa"
                     cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
                     cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
                     out.write(frame)
 
-                    elapsed = time.time() - loop_start
-                    sleep_time = frame_duration - elapsed
+                    next_frame_time += frame_duration
+                    sleep_time = next_frame_time - time.monotonic()
                     if sleep_time > 0:
                         time.sleep(sleep_time)
 
