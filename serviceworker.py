@@ -24,6 +24,7 @@ class ServiceWorker(threading.Thread):
 
         video_enabled = cap.isOpened()
         out = None
+        frame_duration = 0
 
         if not video_enabled:
             utils.log("Service Worker", "Camera stream not found. Proceeding with sensor logging.")
@@ -34,6 +35,11 @@ class ServiceWorker(threading.Thread):
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = int(cap.get(cv2.CAP_PROP_FPS))
+
+            if fps <= 0:
+                fps = 30.0
+
+            frame_duration = 1.0 / fps
 
             if width > 0 and height > 0:
                 fourcc = cv2.VideoWriter_fourcc(*'XVID')
@@ -49,27 +55,29 @@ class ServiceWorker(threading.Thread):
             
             alt, temp, hum, pres = (0, 0, 0, 0)
             last_sensor_update = 0
+            timestamp = utils.timestamp("%H:%M:%S")
 
             utils.log("Service Worker", f"CSV Logging Started at {csv_file}")
 
             while self.running:
+                loop_start = time.time()
+
                 if video_enabled:
                     ret, frame = cap.read()
                     if not ret:
                         break
 
-                current_time = time.time()
                 try:
                     alt = round(self.bme280.altitude, 2)
                     temp = round(self.bme280.temperature, 2)
                     hum = round(self.bme280.relative_humidity, 2)
                     pres = round(self.bme280.pressure, 2)
 
-                    if current_time - last_sensor_update >= 1.0:
+                    if loop_start - last_sensor_update >= 1.0:
                         timestamp = utils.timestamp("%H:%M:%S")
                         writer.writerow([timestamp, alt, temp, hum, pres])
                         csvf.flush()
-                        last_sensor_update = current_time
+                        last_sensor_update = loop_start
                 except:
                     pass
                 
@@ -78,6 +86,11 @@ class ServiceWorker(threading.Thread):
                     cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
                     cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
                     out.write(frame)
+
+                    elapsed = time.time() - loop_start
+                    sleep_time = frame_duration - elapsed
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
 
         if cap: cap.release()
         if out: out.release()
