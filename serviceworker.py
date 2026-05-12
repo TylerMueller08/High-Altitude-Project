@@ -12,113 +12,85 @@ class ServiceWorker(threading.Thread):
         super().start()
 
     def run(self):
-        video_enabled = False
-        cap = None
-        out = None
-
         folder = f"data/{utils.timestamp()}"
         os.makedirs(folder, exist_ok=True)
 
-        video_file = f"{folder}/video.mp4"
+        video_file = f"{folder}/video.avi"
         csv_file = f"{folder}/data.csv"
 
         cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
+        utils.log("Service Worker", "Attempting to access camera stream.")
+        time.sleep(2.5)
+
         video_enabled = cap.isOpened()
         out = None
+        target_fps = 20.0
+        frame_duration = 1.0 / target_fps
+
         if not video_enabled:
-            utils.log("Service Worker", "Camera stream not found. Proceeding.")
+            utils.log("Service Worker", "Camera stream not found. Proceeding with sensor logging.")
         else:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            out = cv2.VideoWriter(
-                video_file,
-                cv2.VideoWriter_fourcc(*'mp4v'),
-                1.0,
-                (width, height)
-            )
-            utils.log("Service Worker", "Video Recording Initialized.")
+            if width > 0 and height > 0:
+                fourcc = cv2.VideoWriter_fourcc(*'XVID')
+                out = cv2.VideoWriter(video_file, fourcc, target_fps, (width, height))
+                utils.log("Service Worker", f"Video Recording Initialized with {width}x{height} at {target_fps} FPS.")
+            else:
+                utils.log("Service Worker", "Camera Reported Invalid Resolution. Video Recording Disabled.")
+                video_enabled = False
 
         with open(csv_file, "w", newline="") as csvf:
             writer = csv.writer(csvf)
             writer.writerow(["Timestamp [MST]", "Altitude [m]", "Temperature[C]", "Humidity [%]", "Pressure [hPa]"])
+            
+            last_sensor_update = 0
+            alt, temp, hum, pres, timestamp = (0, 0, 0, 0, "00:00:00")
+
+            next_frame_time = time.time()
             utils.log("Service Worker", f"CSV Logging Started at {csv_file}")
 
             while self.running:
-                start_loop = time.time()
+                loop_start = time.time()
                 
-                try:
-                    timestamp = utils.timestamp("%H:%M:%S")
-                    alt = round(self.bme280.altitude, 2)
-                    temp = round(self.bme280.temperature, 2)
-                    hum = round(self.bme280.relative_humidity, 2)
-                    pres = round(self.bme280.pressure, 2)
-                    
-                    writer.writerow([timestamp, alt, temp, hum, pres])
-                    csvf.flush() 
-                except Exception as e:
-                    utils.log("Service Worker", f"Sensor Error: {e}")
-
+                if loop_start - last_sensor_update >= 1.0:
+                    try:
+                        timestamp = utils.timestamp("%H:%M:%S")
+                        alt = round(self.bme280.altitude, 2)
+                        temp = round(self.bme280.temperature, 2)
+                        hum = round(self.bme280.relative_humidity, 2)
+                        pres = round(self.bme280.pressure, 2)
+                        
+                        writer.writerow([timestamp, alt, temp, hum, pres])
+                        csvf.flush()
+                        last_sensor_update = loop_start
+                    except Exception as e:
+                        utils.log("Service Worker", f"Sensor Read Error: {e}")
+                
                 if video_enabled:
-                    ret, frame = cap.read()
-                    if ret:
-                        cv2.putText(frame, f"Alt: {alt}m | Temp: {temp}C", (10, 30), 
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                        out.write(frame)
-                    else:
-                        utils.log("Service Worker", "Lost camera connection.")
-                        video_enabled = False
+                    try:
+                        ret, frame = cap.read()
+                        if ret:
+                            txt = f"{timestamp} | {alt}m | {temp}C"
+                            cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 3)
+                            cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                            out.write(frame)
+                        else:
+                            utils.log("Service Worker", "Camera Stream Lost During Capture.")
+                    except Exception as e:
+                        utils.log("Service Worker", f"Video Capture Error: {e}")
+                
+                next_frame_time += frame_duration
+                sleep_time = next_frame_time - time.time()
 
-                elapsed = time.time() - start_loop
-                time.sleep(max(0, 1.0 - elapsed))
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                else:
+                    next_frame_time = time.time()
 
         if cap: cap.release()
         if out: out.release()
-
-        utils.log("Service Worker", f"Recording Started: {folder}")
-
-        with open(csv_file, "w", newline="") as csvf:
-            writer = csv.writer(csvf)
-            writer.writerow(["Timestamp [MST]", "Altitude [m]", "Temperature[C]", "Humidity [%]", "Pressure [hPa]"])
-
-            while self.running:
-                start_loop = time.time()
-                
-                ret, frame = cap.read()
-                if not ret:
-                    utils.log("Service Worker", "Failed to capture video frame.")
-                    break
-
-                try:
-                    timestamp = utils.timestamp("%H:%M:%S")
-                    alt = round(self.bme280.altitude, 2)
-                    temp = round(self.bme280.temperature, 2)
-                    hum = round(self.bme280.relative_humidity, 2)
-                    pres = round(self.bme280.pressure, 2)
-                except Exception as e:
-                    utils.log("Service Worker", f"Sensor read error: {e}")
-                    continue
-
-                font = cv2.FONT_HERSHEY_SIMPLEX
-                color = (255, 255, 255)
-                thickness = 2
-                scale = 0.7
-
-                cv2.putText(frame, f"Time: {timestamp}", (10, 30), font, scale, color, thickness)
-                cv2.putText(frame, f"Alt:  {alt} m",     (10, 60), font, scale, color, thickness)
-                cv2.putText(frame, f"Temp: {temp} C",     (10, 90), font, scale, color, thickness)
-                cv2.putText(frame, f"Hum:  {hum} %",     (10, 120), font, scale, color, thickness)
-                cv2.putText(frame, f"Pres: {pres} hPa",   (10, 150), font, scale, color, thickness)
-
-                out.write(frame)
-                writer.writerow([timestamp, alt, temp, hum, pres])
-                csvf.flush()
-
-                elapsed = time.time() - start_loop
-                time.sleep(max(0, 1.0 - elapsed))
-
-        cap.release()
-        out.release()
-        utils.log("Service Worker", "Recording Stopped and Files Saved.")
+        utils.log("Service Worker", f"Recording Stopped and Cleanup Complete. Files Saved in {folder}")
 
     def stop(self):
         self.running = False
