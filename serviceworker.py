@@ -18,15 +18,11 @@ class ServiceWorker(threading.Thread):
         video_file = f"{folder}/video.avi"
         csv_file = f"{folder}/data.csv"
 
-        target_fps = 10.0
-        frame_time = 1.0 / target_fps
-
         cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
         utils.log("Service Worker", "Attempting to access camera stream.")
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, target_fps)
 
         time.sleep(2.5)
 
@@ -34,69 +30,55 @@ class ServiceWorker(threading.Thread):
         out = None
 
         if not video_enabled:
-            utils.log("Service Worker", "Camera stream not found. Proceeding with sensor logging.")
+            utils.log("Service Worker", "Camera stream not found. Proceeding wit    h sensor logging.")
         else:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
 
-            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-            out = cv2.VideoWriter(video_file, fourcc, target_fps, (width, height))
-            utils.log("Service Worker", f"Video Recording Initialized with {width}x{height} at {target_fps} FPS.")
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(video_file, fourcc, fps, (width, height))
+            utils.log("Service Worker", f"Video Recording Initialized with {width}x{height} at {fps} FPS.")
 
         with open(csv_file, "w", newline="") as csvf:
             writer = csv.writer(csvf)
             writer.writerow(["Timestamp [MST]", "Altitude [m]", "Temperature [C]", "Humidity [%]", "Pressure [hPa]"])
             
             alt, temp, hum, pres = (0, 0, 0, 0)
-            last_sensor_update = -1
+            last_sensor_update = time.time()
+            timestamp = utils.timestamp("%H:%M:%S")
 
             utils.log("Service Worker", f"CSV Logging Started at {csv_file}")
 
-            next_frame_time = time.monotonic()
-            last_frame = None
-
             while self.running:
-                now = time.monotonic()
-                if now < next_frame_time:
-                    time.sleep(next_frame_time - now)
-                frame_start = time.monotonic()
-                next_frame_time += frame_time
-
-                frame = None
-
                 if video_enabled:
                     ret, frame = cap.read()
-                    if ret:
-                        frame = new_frame
-                        last_frame = new_frame
-                    else:
+                    if not ret:
                         utils.log("Service Worker", "Failed to read frame from camera. Stopping video recording.")
+                        break
 
-                if frame is None and last_frame is not None:
-                    frame = last_frame.copy()
-                
-                if frame is None:
-                    continue
+                now = time.time()
 
-                try:
-                    alt = round(self.bme280.altitude, 2)
-                    temp = round(self.bme280.temperature, 2)
-                    hum = round(self.bme280.relative_humidity, 2)
-                    pres = round(self.bme280.pressure, 2)
-                except Exception as e:
-                    utils.log("Service Worker", f"Error occurred while updating sensor data: {e}")
+                if now - last_sensor_update >= 1.0:
+                    last_sensor_update = now
 
-                current_second = int(time.time())
-                if current_second != last_sensor_update:
-                    last_sensor_second = current_second
+                    try:
+                        alt = round(self.bme280.altitude, 2)
+                        temp = round(self.bme280.temperature, 2)
+                        hum = round(self.bme280.relative_humidity, 2)
+                        pres = round(self.bme280.pressure, 2)
+                    except Exception as e:
+                        utils.log("Service Worker", f"Error occurred while updating sensor data: {e}")
+
                     timestamp = utils.timestamp("%H:%M:%S")
                     writer.writerow([timestamp, alt, temp, hum, pres])
                     csvf.flush()
 
-                txt = f"{timestamp} | {alt}m | {temp}C | {hum}% | {pres}hPa"
-                cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
-                cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
-                out.write(frame)
+                if video_enabled:
+                    txt = f"{timestamp} | {alt}m | {temp}C | {hum}% | {pres}hPa"
+                    cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
+                    cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+                    out.write(frame)
 
         if cap: cap.release()
         if out: out.release()
