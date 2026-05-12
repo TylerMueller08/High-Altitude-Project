@@ -23,9 +23,9 @@ class ServiceWorker(threading.Thread):
         csv_file = f"{folder}/data.csv"
 
         cap = cv2.VideoCapture(0)
-        video_enalbed = cap.isOpened()
+        video_enabled = cap.isOpened()
         out = None
-        if not video_enalbed:
+        if not video_enabled:
             utils.log("Service Worker", "Camera stream not found. Proceeding.")
         else:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
