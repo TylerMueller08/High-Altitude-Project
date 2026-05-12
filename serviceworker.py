@@ -19,14 +19,13 @@ class ServiceWorker(threading.Thread):
         csv_file = f"{folder}/data.csv"
 
         target_fps = 10.0
-        frame_duration = 1.0 / target_fps
 
         cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
         utils.log("Service Worker", "Attempting to access camera stream.")
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 10)
+        cap.set(cv2.CAP_PROP_FPS, target_fps)
 
         time.sleep(2.5)
 
@@ -38,6 +37,10 @@ class ServiceWorker(threading.Thread):
         else:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+            actual_fps = cap.get(cv2.CAP_PROP_FPS)
+            if actual_fps <= 0 or actual_fps > 120:
+                actual_fps = target_fps
 
             if width > 0 and height > 0:
                 fourcc = cv2.VideoWriter_fourcc(*'MJPG')
@@ -56,7 +59,6 @@ class ServiceWorker(threading.Thread):
             timestamp = utils.timestamp("%H:%M:%S")
 
             utils.log("Service Worker", f"CSV Logging Started at {csv_file}")
-            next_frame_time = time.monotonic()
 
             while self.running:
                 loop_start = time.monotonic()
@@ -86,11 +88,6 @@ class ServiceWorker(threading.Thread):
                     cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
                     cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
                     out.write(frame)
-
-                    next_frame_time += frame_duration
-                    sleep_time = next_frame_time - time.monotonic()
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
 
         if cap: cap.release()
         if out: out.release()
