@@ -19,6 +19,7 @@ class ServiceWorker(threading.Thread):
         csv_file = f"{folder}/data.csv"
 
         target_fps = 10.0
+        frame_time = 1.0 / target_fps
 
         cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
         utils.log("Service Worker", "Attempting to access camera stream.")
@@ -38,56 +39,64 @@ class ServiceWorker(threading.Thread):
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-            actual_fps = cap.get(cv2.CAP_PROP_FPS)
-            if actual_fps <= 0 or actual_fps > 120:
-                actual_fps = target_fps
-
-            if width > 0 and height > 0:
-                fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-                out = cv2.VideoWriter(video_file, fourcc, target_fps, (width, height))
-                utils.log("Service Worker", f"Video Recording Initialized with {width}x{height} at {target_fps} FPS.")
-            else:
-                utils.log("Service Worker", "Camera Reported Invalid Resolution. Video Recording Disabled.")
-                video_enabled = False
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            out = cv2.VideoWriter(video_file, fourcc, target_fps, (width, height))
+            utils.log("Service Worker", f"Video Recording Initialized with {width}x{height} at {target_fps} FPS.")
 
         with open(csv_file, "w", newline="") as csvf:
             writer = csv.writer(csvf)
             writer.writerow(["Timestamp [MST]", "Altitude [m]", "Temperature [C]", "Humidity [%]", "Pressure [hPa]"])
             
             alt, temp, hum, pres = (0, 0, 0, 0)
-            last_sensor_update = 0
-            timestamp = utils.timestamp("%H:%M:%S")
+            last_sensor_update = -1
 
             utils.log("Service Worker", f"CSV Logging Started at {csv_file}")
 
+            next_frame_time = time.monotonic()
+            last_frame = None
+
             while self.running:
-                loop_start = time.monotonic()
+                now = time.monotonic()
+                if now < next_frame_time:
+                    time.sleep(next_frame_time - now)
+                frame_start = time.monotonic()
+                next_frame_time += frame_time
+
+                frame = None
 
                 if video_enabled:
                     ret, frame = cap.read()
-                    if not ret:
+                    if ret:
+                        frame = new_frame
+                        last_frame = new_frame
+                    else:
                         utils.log("Service Worker", "Failed to read frame from camera. Stopping video recording.")
-                        break
+
+                if frame is None and last_frame is not None:
+                    frame = last_frame.copy()
+                
+                if frame is None:
+                    continue
 
                 try:
                     alt = round(self.bme280.altitude, 2)
                     temp = round(self.bme280.temperature, 2)
                     hum = round(self.bme280.relative_humidity, 2)
                     pres = round(self.bme280.pressure, 2)
-
-                    if loop_start - last_sensor_update >= 1.0:
-                        timestamp = utils.timestamp("%H:%M:%S")
-                        writer.writerow([timestamp, alt, temp, hum, pres])
-                        csvf.flush()
-                        last_sensor_update = loop_start
                 except Exception as e:
                     utils.log("Service Worker", f"Error occurred while updating sensor data: {e}")
 
-                if video_enabled:
-                    txt = f"{timestamp} | {alt}m | {temp}C | {hum}% | {pres}hPa"
-                    cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
-                    cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
-                    out.write(frame)
+                current_second = int(time.time())
+                if current_second != last_sensor_update:
+                    last_sensor_second = current_second
+                    timestamp = utils.timestamp("%H:%M:%S")
+                    writer.writerow([timestamp, alt, temp, hum, pres])
+                    csvf.flush()
+
+                txt = f"{timestamp} | {alt}m | {temp}C | {hum}% | {pres}hPa"
+                cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
+                cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+                out.write(frame)
 
         if cap: cap.release()
         if out: out.release()
