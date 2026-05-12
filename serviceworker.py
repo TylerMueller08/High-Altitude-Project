@@ -25,13 +25,17 @@ class ServiceWorker(threading.Thread):
         video_enabled = cap.isOpened()
         out = None
         target_fps = 20.0
-        frame_duration = 1.0 / target_fps
+        frame_interval = 1.0 / target_fps
 
         if not video_enabled:
             utils.log("Service Worker", "Camera stream not found. Proceeding with sensor logging.")
         else:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
             if width > 0 and height > 0:
                 fourcc = cv2.VideoWriter_fourcc(*'XVID')
                 out = cv2.VideoWriter(video_file, fourcc, target_fps, (width, height))
@@ -45,15 +49,15 @@ class ServiceWorker(threading.Thread):
             writer.writerow(["Timestamp [MST]", "Altitude [m]", "Temperature[C]", "Humidity [%]", "Pressure [hPa]"])
             
             last_sensor_update = 0
+            last_frame_time = 0
             alt, temp, hum, pres, timestamp = (0, 0, 0, 0, "00:00:00")
 
-            next_frame_time = time.time()
             utils.log("Service Worker", f"CSV Logging Started at {csv_file}")
 
             while self.running:
-                loop_start = time.time()
+                current_time = time.time()
                 
-                if loop_start - last_sensor_update >= 1.0:
+                if current_time - last_sensor_update >= 1.0:
                     try:
                         timestamp = utils.timestamp("%H:%M:%S")
                         alt = round(self.bme280.altitude, 2)
@@ -63,30 +67,28 @@ class ServiceWorker(threading.Thread):
                         
                         writer.writerow([timestamp, alt, temp, hum, pres])
                         csvf.flush()
-                        last_sensor_update = loop_start
+                        last_sensor_update = current_time
                     except Exception as e:
                         utils.log("Service Worker", f"Sensor Read Error: {e}")
                 
                 if video_enabled:
-                    try:
-                        ret, frame = cap.read()
-                        if ret:
-                            txt = f"{timestamp} | {alt}m | {temp}C"
-                            cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 3)
-                            cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                            out.write(frame)
-                        else:
-                            utils.log("Service Worker", "Camera Stream Lost During Capture.")
-                    except Exception as e:
-                        utils.log("Service Worker", f"Video Capture Error: {e}")
+                    if current_time - last_frame_time >= frame_interval:
+                        try:
+                            ret, frame = cap.read()
+                            if ret:
+                                txt = f"{timestamp} | {alt}m | {temp}C"
+                                cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
+                                cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+                                
+                                out.write(frame)
+                                last_frame_time = current_time
+                            else:
+                                utils.log("Service Worker", "Camera Stream Lost During Capture.")
+                                video_enabled = False
+                        except Exception as e:
+                            utils.log("Service Worker", f"Video Capture Error: {e}")
                 
-                next_frame_time += frame_duration
-                sleep_time = next_frame_time - time.time()
-
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-                else:
-                    next_frame_time = time.time()
+                time.sleep(0.005)
 
         if cap: cap.release()
         if out: out.release()
