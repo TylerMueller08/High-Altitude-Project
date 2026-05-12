@@ -22,7 +22,7 @@ class ServiceWorker(threading.Thread):
         video_file = f"{folder}/video.mp4"
         csv_file = f"{folder}/data.csv"
 
-        cap = cv2.VideoCapture(0)
+        cap = cv2.VideoCapture(1, cv2.CAP_V4L2)
         video_enabled = cap.isOpened()
         out = None
         if not video_enabled:
