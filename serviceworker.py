@@ -74,7 +74,14 @@ class ServiceWorker(threading.Thread):
                 if video_enabled:
                     if current_time - last_frame_time >= frame_interval:
                         try:
-                            ret, frame = cap.read()
+                            while True:
+                                has_frame = cap.grab()
+                                if not has_frame:
+                                    break
+                                if time.time() - current_time > 0.03:
+                                    break
+
+                            ret, frame = cap.retrieve()
                             if ret:
                                 txt = f"{timestamp} | {alt}m | {temp}C"
                                 cv2.putText(frame, txt, (15, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3)
